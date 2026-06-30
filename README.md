@@ -47,7 +47,3 @@ streamlit run app/dashboard/main.py
 - MCP integration
 - multi-agent evaluation workflows
 - richer experiment lineage and reporting
-
-## License
-
-No license has been added yet.
