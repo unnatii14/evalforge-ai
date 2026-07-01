@@ -30,7 +30,7 @@ class BenchmarkService:
                     dataset_name=request.benchmark_name,
                     config=scenario.config,
                     metrics=scenario.metrics,
-                    samples=[sample.model_dump() for sample in scenario.samples],
+                    samples=scenario.samples,
                 )
             )
 

@@ -81,7 +81,9 @@ class EvaluationRequest(BaseModel):
     dataset_name: str
     config: LLMConfig = Field(default_factory=LLMConfig)
     metrics: list[str] = Field(default_factory=list)
-    samples: list[dict[str, Any]] = Field(default_factory=list)
+    samples: list["EvaluationSample"] = Field(default_factory=list)
+    max_samples: int = 10
+    system_prompt: Optional[str] = None
 
 
 class EvaluationSample(BaseModel):
