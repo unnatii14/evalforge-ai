@@ -1,0 +1,15 @@
+.git
+.gitignore
+.venv
+__pycache__/
+*.pyc
+.pytest_cache/
+.deepeval
+*.ipynb
+evalforge.egg-info/
+data/*.db
+data/reports/
+data/uploads/
+tests/
+build/
+dist/

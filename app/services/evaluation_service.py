@@ -5,13 +5,15 @@ from time import perf_counter
 from app.evaluators.deepeval_evaluator import DeepEvalEvaluator
 from app.evaluators.ragas_evaluator import RagasEvaluator, RagasInputs
 from app.llm_providers.base import BaseLLMProvider
-from app.llm_providers.ollama_provider import OllamaProvider
+from app.llm_providers.factory import get_provider
 from app.models.schemas import (
     EvaluationMetricResult,
     EvaluationRequest,
     EvaluationResponse,
     EvaluationRunCreate,
     EvaluationSample,
+    EvaluationSampleRecord,
+    LLMConfig,
 )
 from app.services.dataset_service import DatasetService
 from app.services.experiment_service import ExperimentService
@@ -27,16 +29,22 @@ class EvaluationService:
         dataset_service: DatasetService | None = None,
     ) -> None:
         self.experiment_service = experiment_service or ExperimentService()
-        self.provider = provider or OllamaProvider()
+        # When no provider is injected (e.g. in tests), the provider is resolved
+        # per-run from the request config via the factory, so the requested
+        # provider actually routes instead of always using Ollama.
+        self._provider_override = provider
         self.ragas_evaluator = ragas_evaluator or RagasEvaluator()
         self.deepeval_evaluator = deepeval_evaluator or DeepEvalEvaluator()
         self.dataset_service = dataset_service or DatasetService()
+
+    def _resolve_provider(self, config: LLMConfig) -> BaseLLMProvider:
+        return self._provider_override or get_provider(config)
 
     def run(self, request: EvaluationRequest) -> EvaluationResponse:
         started_at = perf_counter()
         requested_metrics = request.metrics or ["ragas"]
         evaluation_samples = self._resolve_samples(request)
-        generated_samples, generation_latency = self._generate_answers(request, evaluation_samples)
+        generated_samples, sources, generation_latency = self._generate_answers(request, evaluation_samples)
 
         metrics: list[EvaluationMetricResult] = []
         if "ragas" in requested_metrics:
@@ -60,6 +68,21 @@ class EvaluationService:
             )
         )
 
+        self.experiment_service.save_metrics(run_record.id, metrics)
+        self.experiment_service.save_samples(
+            run_record.id,
+            [
+                EvaluationSampleRecord(
+                    question=sample.question,
+                    answer=sample.answer,
+                    contexts=sample.contexts,
+                    ground_truth=sample.ground_truth,
+                    answer_source=source,
+                )
+                for sample, source in zip(generated_samples, sources)
+            ],
+        )
+
         return EvaluationResponse(
             run=run_record,
             metrics=metrics,
@@ -76,12 +99,15 @@ class EvaluationService:
         self,
         request: EvaluationRequest,
         samples: list[EvaluationSample],
-    ) -> tuple[list[EvaluationSample], float]:
+    ) -> tuple[list[EvaluationSample], list[str], float]:
         generated: list[EvaluationSample] = []
+        sources: list[str] = []
         total_latency = 0.0
+        provider = self._resolve_provider(request.config)
         for sample in samples:
             if sample.answer.strip():
                 generated.append(sample)
+                sources.append("provided")
                 continue
 
             context_section = "\n".join(sample.contexts) if sample.contexts else ""
@@ -93,7 +119,7 @@ class EvaluationService:
                 "Answer:"
             )
             try:
-                result = self.provider.generate(prompt=prompt, config=request.config, system_prompt=request.system_prompt)
+                result = provider.generate(prompt=prompt, config=request.config, system_prompt=request.system_prompt)
                 total_latency += result.latency_seconds
                 generated.append(
                     EvaluationSample(
@@ -103,18 +129,22 @@ class EvaluationService:
                         ground_truth=sample.ground_truth,
                     )
                 )
-            except Exception as exc:
+                sources.append("generated")
+            except Exception:
+                # Generation failed. Do NOT fall back to the ground truth as the
+                # answer -- that would make a failed run score near-perfect and
+                # corrupt the evaluation. Record an empty answer so the metrics
+                # reflect the failure honestly.
                 generated.append(
                     EvaluationSample(
                         question=sample.question,
-                        answer=(sample.ground_truth or "").strip(),
+                        answer="",
                         contexts=sample.contexts,
                         ground_truth=sample.ground_truth,
                     )
                 )
-                total_latency += 0.0
-                _ = exc
-        return generated, total_latency
+                sources.append("generation_failed")
+        return generated, sources, total_latency
 
     def _run_ragas(self, samples: list[EvaluationSample]) -> list[EvaluationMetricResult]:
         if not samples:

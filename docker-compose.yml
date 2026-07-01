@@ -1,0 +1,65 @@
+# Full local stack: Ollama (models) + EvalForge API + EvalForge dashboard.
+# Usage:
+#   docker compose up --build
+#   docker compose exec ollama ollama pull llama3.2
+#   docker compose exec ollama ollama pull nomic-embed-text
+# Then: API on http://localhost:8000/docs , dashboard on http://localhost:8501
+
+services:
+  ollama:
+    image: ollama/ollama:latest
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_models:/root/.ollama
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build: .
+    command: uvicorn app.api.main:app --host 0.0.0.0 --port 8000
+    ports:
+      - "8000:8000"
+    environment:
+      EVAL_BACKEND: ollama
+      OLLAMA_HOST: http://ollama:11434
+      DATA_DIR: /app/data
+      SQLITE_PATH: /app/data/evalforge.db
+      JUDGE_MODEL: llama3.2
+      EMBEDDING_MODEL: nomic-embed-text
+      ENVIRONMENT: production
+    volumes:
+      - evalforge_data:/app/data
+    depends_on:
+      ollama:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  dashboard:
+    build: .
+    command: >
+      streamlit run app/dashboard/main.py
+      --server.port 8501
+      --server.address 0.0.0.0
+    ports:
+      - "8501:8501"
+    environment:
+      EVAL_BACKEND: ollama
+      OLLAMA_HOST: http://ollama:11434
+      DATA_DIR: /app/data
+      SQLITE_PATH: /app/data/evalforge.db
+    volumes:
+      - evalforge_data:/app/data
+    depends_on:
+      - api
+
+volumes:
+  evalforge_data:
+  ollama_models:

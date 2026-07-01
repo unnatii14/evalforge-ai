@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 
 class ProviderName(str, Enum):
     ollama = "ollama"
+    groq = "groq"
     openai = "openai"
     gemini = "gemini"
 
@@ -98,6 +99,26 @@ class EvaluationResponse(BaseModel):
     metrics: list[EvaluationMetricResult]
     latency_seconds: float
     cost_usd: float = 0.0
+
+
+class EvaluationSampleRecord(BaseModel):
+    question: str
+    answer: str
+    contexts: list[str] = Field(default_factory=list)
+    ground_truth: str = ""
+    answer_source: str = "generated"
+
+
+class EvaluationRunDetails(BaseModel):
+    run: EvaluationRunRecord
+    metrics: list[EvaluationMetricResult] = Field(default_factory=list)
+    samples: list[EvaluationSampleRecord] = Field(default_factory=list)
+
+
+class EvaluationRunSummary(BaseModel):
+    run: EvaluationRunRecord
+    metrics: list[EvaluationMetricResult] = Field(default_factory=list)
+    overall_score: float = 0.0
 
 
 class BenchmarkScenario(BaseModel):

@@ -1,8 +1,15 @@
 import json
 from datetime import datetime
+from statistics import mean
 
 from app.db.session import get_connection
-from app.models.schemas import EvaluationRunCreate, EvaluationRunRecord
+from app.models.schemas import (
+    EvaluationMetricResult,
+    EvaluationRunCreate,
+    EvaluationRunRecord,
+    EvaluationRunSummary,
+    EvaluationSampleRecord,
+)
 
 
 class ExperimentRepository:
@@ -56,6 +63,21 @@ class ExperimentRepository:
             )
         return records
 
+    def list_run_summaries(self) -> list[EvaluationRunSummary]:
+        runs = self.list_runs()
+        summaries: list[EvaluationRunSummary] = []
+        for run in runs:
+            metrics = self.list_metrics(run.id)
+            overall_score = mean([metric.score for metric in metrics]) if metrics else 0.0
+            summaries.append(
+                EvaluationRunSummary(
+                    run=run,
+                    metrics=metrics,
+                    overall_score=overall_score,
+                )
+            )
+        return summaries
+
     def get_run(self, run_id: int) -> EvaluationRunRecord | None:
         with get_connection() as connection:
             row = connection.execute(
@@ -78,3 +100,91 @@ class ExperimentRepository:
             metadata=json.loads(row["metadata"] or "{}"),
             created_at=datetime.fromisoformat(row["created_at"]),
         )
+
+    def save_metrics(self, run_id: int, metrics: list[EvaluationMetricResult]) -> None:
+        if not metrics:
+            return
+        payload = [
+            (
+                run_id,
+                metric.name,
+                metric.score,
+                json.dumps(metric.details),
+            )
+            for metric in metrics
+        ]
+        with get_connection() as connection:
+            connection.executemany(
+                """
+                INSERT INTO evaluation_metrics (run_id, metric_name, score, details)
+                VALUES (?, ?, ?, ?)
+                """,
+                payload,
+            )
+            connection.commit()
+
+    def list_metrics(self, run_id: int) -> list[EvaluationMetricResult]:
+        with get_connection() as connection:
+            rows = connection.execute(
+                """
+                SELECT metric_name, score, details
+                FROM evaluation_metrics
+                WHERE run_id = ?
+                ORDER BY id ASC
+                """,
+                (run_id,),
+            ).fetchall()
+        return [
+            EvaluationMetricResult(
+                name=row["metric_name"],
+                score=float(row["score"]),
+                details=json.loads(row["details"] or "{}"),
+            )
+            for row in rows
+        ]
+
+    def save_samples(self, run_id: int, samples: list[EvaluationSampleRecord]) -> None:
+        if not samples:
+            return
+        payload = [
+            (
+                run_id,
+                sample.question,
+                sample.answer,
+                json.dumps(sample.contexts),
+                sample.ground_truth,
+                sample.answer_source,
+            )
+            for sample in samples
+        ]
+        with get_connection() as connection:
+            connection.executemany(
+                """
+                INSERT INTO evaluation_samples (run_id, question, answer, contexts, ground_truth, answer_source)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                payload,
+            )
+            connection.commit()
+
+    def list_samples(self, run_id: int) -> list[EvaluationSampleRecord]:
+        with get_connection() as connection:
+            rows = connection.execute(
+                """
+                SELECT question, answer, contexts, ground_truth, answer_source
+                FROM evaluation_samples
+                WHERE run_id = ?
+                ORDER BY id ASC
+                """,
+                (run_id,),
+            ).fetchall()
+        return [
+            EvaluationSampleRecord(
+                question=row["question"],
+                answer=row["answer"],
+                contexts=json.loads(row["contexts"] or "[]"),
+                ground_truth=row["ground_truth"],
+                answer_source=row["answer_source"],
+            )
+            for row in rows
+        ]

@@ -32,7 +32,7 @@ def show():
             
             # Provider & Model Settings
             provider = st.selectbox("LLM Provider", [p.value for p in ProviderName], index=0)
-            model_name = st.text_input("LLM Model Name", value="llama3.2:3b" if provider == "ollama" else "gpt-4o-mini" if provider == "openai" else "gemini-1.5-flash")
+            model_name = st.text_input("LLM Model Name", value="llama-3.3-70b-versatile" if provider == "groq" else "llama3.2:3b" if provider == "ollama" else "gpt-4o-mini" if provider == "openai" else "gemini-1.5-flash")
             
             temperature = st.slider("Temperature", 0.0, 1.0, 0.0, 0.05)
             
